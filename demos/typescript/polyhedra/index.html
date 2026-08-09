@@ -1,0 +1,397 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Plato → TypeScript — polyhedra studio</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#0e0f13;color:#d8dae0;margin:0;padding:24px}
+  h1{font-size:20px;margin:0 0 4px} p.sub{color:#8b909c;margin:0 0 14px;font-size:13px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center}
+  .row .cap{font-size:11px;color:#6d7280;text-transform:uppercase;letter-spacing:.08em;width:74px}
+  .row button{font:inherit;font-size:12px;color:#c7ccd6;background:#181b22;border:1px solid #2a2f3a;
+    border-radius:8px;padding:6px 11px;cursor:pointer;transition:all .12s}
+  .row button:hover{background:#20242e;border-color:#3a4150}
+  .row button.on{background:#1e3a5f;border-color:#3f7fd6;color:#eaf2ff}
+  .row button.op{background:#16211a;border-color:#2a3a2f}
+  .row button.op:hover{border-color:#3f7f56}
+  .row select{font:inherit;font-size:12px;color:#c7ccd6;background:#181b22;border:1px solid #2a2f3a;border-radius:8px;padding:6px 8px}
+  .stagewrap{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+  .stage{position:relative;flex:0 0 auto}
+  .stage canvas{width:min(58vw,600px);height:min(58vw,600px);border-radius:10px;background:#000;display:block;cursor:grab}
+  .stage canvas:active{cursor:grabbing}
+  .hint{position:absolute;left:10px;bottom:10px;font-size:11px;color:#aeb4c0;background:rgba(0,0,0,.45);
+        padding:3px 8px;border-radius:6px;pointer-events:none}
+  .notation{position:absolute;right:10px;top:10px;font-family:ui-monospace,monospace;font-size:18px;color:#eaf2ff;
+        background:rgba(0,0,0,.45);padding:4px 10px;border-radius:6px;pointer-events:none}
+  .panel{flex:0 0 264px}
+  .panel canvas{width:264px;height:330px;display:block;border-radius:10px}
+  .stats{margin-top:12px;background:#12141a;border:1px solid #232733;border-radius:10px;padding:12px;
+         font-size:12.5px;width:240px}
+  .stats .t{font-size:14px;font-weight:600;margin-bottom:6px;color:#eaf2ff}
+  .stats .kv{display:flex;justify-content:space-between;color:#aeb4c0;margin:2px 0}
+  .stats .kv b{color:#d8dae0;font-weight:500;font-family:ui-monospace,monospace}
+  .stats .hist{margin-top:8px;border-top:1px solid #232733;padding-top:8px}
+  .stats .bar{display:flex;align-items:center;gap:6px;margin:3px 0;font-size:11.5px;color:#aeb4c0}
+  .stats .bar .sw{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
+  .stats .bar .n{font-family:ui-monospace,monospace;color:#d8dae0}
+  .meta{margin-top:12px;max-width:900px}
+  .meta .d{color:#8b909c;font-size:13px;max-width:600px}
+  .status{font-family:ui-monospace,monospace;font-size:11px;margin-top:8px;color:#7bd88f;white-space:pre-wrap}
+  .status.err{color:#ff6b6b}
+</style></head><body>
+<h1>Plato → TypeScript — polyhedra studio</h1>
+<p class="sub">The Plato standard library's <b>Conway operators</b> compiled to TypeScript
+(<code>plato.g.ts</code>, generated from <code>stdlib/geometry</code>), driven live in WebGL2.
+Pick a seed, stack operators, or jump straight to any Archimedean or Catalan solid.
+UI panel by <b>Gratify</b>.</p>
+
+<div class="row"><span class="cap">Seed</span><span id="seeds"></span></div>
+<div class="row"><span class="cap">Operator</span><span id="ops"></span>
+  <button id="undo" title="remove outermost operator">⌫ undo</button>
+  <button id="clear" title="back to the bare seed">✕ clear</button></div>
+<div class="row"><span class="cap">Catalog</span><select id="catalog"></select></div>
+
+<div class="stagewrap">
+  <div class="stage"><canvas id="stage"></canvas>
+    <div class="notation" id="notation"></div>
+    <div class="hint">⟲ drag to orbit · wheel to zoom</div></div>
+  <div class="panel"><canvas id="panel"></canvas><div class="stats" id="stats"></div></div>
+</div>
+<div class="meta"><div class="d" id="mdesc"></div><div class="status" id="status">initialising…</div></div>
+
+<script type="importmap">
+{ "imports": { "gratify": "../../glsl/vendor/gratify/index.js" } }
+</script>
+
+<script type="module">
+import { mount } from "gratify";
+import { Card, Slider, Toggle, Button, Labeled } from "../../glsl/vendor/widgets.js";
+import { PolygonMesh3D, Angle } from "./plato.g.js";
+
+// ---- Conway operators over the Plato-generated library ---------------------
+// Each op is one letter of Conway notation; `run` applies it via the TypeScript
+// port of stdlib/geometry/polyhedra.library.plato.
+const OPS = {
+  d: { name:'dual',     run:(m)=>m.Dual(),
+       desc:'Dual — vertices become faces and faces become vertices (V and F swap, E unchanged). Placed by polar reciprocation, so every dual face stays planar.' },
+  a: { name:'ambo',     run:(m)=>m.Ambo(),
+       desc:'Ambo (rectification) — cut every vertex back to its edge midpoints: one new vertex per edge, one face per old face plus one per old vertex.' },
+  t: { name:'truncate', run:(m)=>m.Truncate(),
+       desc:'Truncate — slice each vertex a third of the way along its edges: every n-gon becomes a 2n-gon and each vertex leaves a new face of its own degree.' },
+  e: { name:'expand',   run:(m,p)=>m.Expand(p.shrink),
+       desc:'Expand (cantellation) — every face shrinks toward its centroid and pulls apart; a quad appears along each old edge and an n-gon at each old vertex. The shrink slider sets how far faces pull in.' },
+  s: { name:'snub',     run:(m,p)=>m.Snub(p.shrink, new Angle(p.twist)),
+       desc:'Snub — expand plus a twist about each face normal; every edge-quad splits into two triangles. Chiral: negative twist gives the mirror image.' },
+  b: { name:'bevel',    run:(m)=>m.Bevel(),
+       desc:'Bevel (omnitruncation) — the Conway identity b = ta: truncate the ambo. Vertex faces come out as rectangles; topology and planarity are exact.' },
+};
+
+const SEEDS = [ ['T','Tetrahedron'], ['C','Cube'], ['O','Octahedron'], ['D','Dodecahedron'], ['I','Icosahedron'] ];
+const SEED_DESC = 'A Platonic seed from the stdlib coordinate tables (golden-ratio rectangles and friends), projected onto the unit sphere.';
+
+// Canonical uniform constants recorded in polyhedra.library.plato.
+const SQRT2_1 = Math.SQRT2 - 1, PHI3 = (1 + Math.sqrt(5)) / 6;
+const SNUB_C = { shrink:0.437593286000961, twist:0.287413148757778 };
+const SNUB_D = { shrink:0.562121964811048, twist:0.228749892022033 };
+
+// The full named catalog: every entry is a Conway program over a seed, with the
+// shrink/twist constants that make the result uniform.
+const CATALOG = [
+  ['— Platonic —'],
+  ...SEEDS.map(([k,n])=>[n, k, '', {}]),
+  ['— Archimedean —'],
+  ['Cuboctahedron','C','a',{}], ['Icosidodecahedron','D','a',{}],
+  ['Truncated tetrahedron','T','t',{}], ['Truncated cube','C','t',{}],
+  ['Truncated octahedron','O','t',{}], ['Truncated dodecahedron','D','t',{}],
+  ['Truncated icosahedron (football)','I','t',{}],
+  ['Rhombicuboctahedron','C','e',{shrink:SQRT2_1}],
+  ['Rhombicosidodecahedron','D','e',{shrink:PHI3}],
+  ['Truncated cuboctahedron','C','b',{}], ['Truncated icosidodecahedron','D','b',{}],
+  ['Snub cube','C','s',SNUB_C], ['Snub dodecahedron','D','s',SNUB_D],
+  ['— Catalan (duals) —'],
+  ['Rhombic dodecahedron','C','da',{}], ['Rhombic triacontahedron','D','da',{}],
+  ['Triakis tetrahedron','T','dt',{}], ['Triakis octahedron','C','dt',{}],
+  ['Tetrakis hexahedron','O','dt',{}], ['Triakis icosahedron','D','dt',{}],
+  ['Pentakis dodecahedron','I','dt',{}],
+  ['Deltoidal icositetrahedron','C','de',{shrink:SQRT2_1}],
+  ['Deltoidal hexecontahedron','D','de',{shrink:PHI3}],
+  ['Disdyakis dodecahedron','C','db',{}], ['Disdyakis triacontahedron','D','db',{}],
+  ['Pentagonal icositetrahedron','C','ds',SNUB_C], ['Pentagonal hexecontahedron','D','ds',SNUB_D],
+];
+
+// ---- application state ------------------------------------------------------
+const state = { seed:'C', ops:[], project:false };   // ops[0] = outermost
+const meshCache = new Map();
+
+function programKey(doc){
+  return state.seed + '|' + state.ops.join('') + '|' + doc.Shrink.toFixed(4) + '|' +
+         doc.Twist.toFixed(4) + '|' + (state.project?1:0);
+}
+function notation(){
+  return state.ops.join('') + state.seed;
+}
+function buildMesh(doc){
+  const key = programKey(doc);
+  if (meshCache.has(key)) return meshCache.get(key);
+  const params = { shrink: doc.Shrink, twist: doc.Twist };
+  const seedName = SEEDS.find(([k])=>k===state.seed)[1];
+  let m = PolygonMesh3D[seedName]();
+  for (let i = state.ops.length - 1; i >= 0; i--)     // innermost applied first
+    m = OPS[state.ops[i]].run(m, params);
+  if (state.project) m = m.ProjectedToUnitSphere();
+  const out = extract(m);
+  meshCache.set(key, out);
+  return out;
+}
+
+// ---- mesh extraction: Plato API calls on one side, GPU buffers on the other -
+function extract(mesh){
+  const F = mesh.FaceCount();
+  const faces = [];
+  for (let f = 0; f < F; f++){
+    const pts = mesh.FacePositions(f), n = pts.Count();
+    const loop = [];
+    for (let i = 0; i < n; i++){ const p = pts.At(i); loop.push([p.X, p.Y, p.Z]); }
+    const nrm = mesh.FaceUnitNormal(f);
+    const va = pts.VectorArea();
+    faces.push({ loop, normal:[nrm.X, nrm.Y, nrm.Z],
+                 area: Math.hypot(va.X, va.Y, va.Z) / 2 });
+  }
+  const V = mesh.VertexCount(), E = mesh.CornerCount() / 2;
+  let radius = 0;
+  for (const fc of faces) for (const p of fc.loop)
+    radius = Math.max(radius, Math.hypot(p[0], p[1], p[2]));
+  return { faces, V, E, F, radius };
+}
+
+// Face color per mode. Arity gets a categorical palette; area a magma-ish ramp.
+const ARITY_COLORS = { 3:[.28,.72,.65], 4:[.95,.71,.25], 5:[.91,.42,.52], 6:[.55,.48,.87],
+                       8:[.35,.58,.92], 10:[.45,.82,.42], 12:[.85,.55,.85] };
+function arityColor(n){ return ARITY_COLORS[n] ?? [.7,.72,.76]; }
+function ramp(t){  // dark violet → orange → pale yellow
+  return [ .18+.82*Math.min(1,1.35*t), .05+.85*t*t, .35*(1-t)+.25*t*t ];
+}
+function faceColor(fc, mode, lo, hi){
+  if (mode==='arity')  return arityColor(fc.loop.length);
+  if (mode==='area')   return ramp(hi>lo ? (fc.area-lo)/(hi-lo) : .5);
+  if (mode==='normal') return [ .5+.5*fc.normal[0], .5+.5*fc.normal[1], .5+.5*fc.normal[2] ];
+  return [.88,.86,.80]; // ivory
+}
+
+function toBuffers(data, mode){
+  let lo=Infinity, hi=-Infinity;
+  for (const fc of data.faces){ lo=Math.min(lo,fc.area); hi=Math.max(hi,fc.area); }
+  const pos=[], nrm=[], col=[], edge=[];
+  for (const fc of data.faces){
+    const c = faceColor(fc, mode, lo, hi), n = fc.normal, L = fc.loop;
+    for (let i = 1; i + 1 < L.length; i++)
+      for (const p of [L[0], L[i], L[i+1]]){ pos.push(...p); nrm.push(...n); col.push(...c); }
+    for (let i = 0; i < L.length; i++){ edge.push(...L[i], ...L[(i+1)%L.length]); }
+  }
+  return { pos:new Float32Array(pos), nrm:new Float32Array(nrm), col:new Float32Array(col),
+           edge:new Float32Array(edge), tris:pos.length/3, lines:edge.length/3 };
+}
+
+// ---- WebGL2 renderer --------------------------------------------------------
+const stage = document.getElementById('stage');
+const gl = stage.getContext('webgl2', { antialias:true, preserveDrawingBuffer:true });
+function sh(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+function prog(vs, fs){ const p=gl.createProgram(); gl.attachShader(p,sh(gl.VERTEX_SHADER,vs));
+  gl.attachShader(p,sh(gl.FRAGMENT_SHADER,fs)); gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; }
+
+const meshProg = prog(`#version 300 es
+  layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNrm; layout(location=2) in vec3 aCol;
+  uniform mat4 uMVP; uniform mat3 uRot;
+  out vec3 vN; out vec3 vC; out vec3 vP;
+  void main(){ vN=uRot*aNrm; vC=aCol; vP=uRot*aPos; gl_Position=uMVP*vec4(aPos,1.0); }`,
+  `#version 300 es
+  precision highp float; in vec3 vN; in vec3 vC; in vec3 vP; out vec4 o;
+  void main(){
+    vec3 n = normalize(vN) * (gl_FrontFacing ? 1.0 : -1.0);
+    vec3 l1 = normalize(vec3(.5,.75,.6)), l2 = normalize(vec3(-.6,-.2,-.7));
+    float d = .18 + .72*max(dot(n,l1),0.0) + .22*max(dot(n,l2),0.0);
+    float fr = pow(1.0-abs(n.z), 3.0);
+    vec3 c = vC*d + vec3(.25,.28,.35)*fr;
+    o = vec4(pow(c, vec3(.4545)), 1.0);
+  }`);
+const lineProg = prog(`#version 300 es
+  layout(location=0) in vec3 aPos; uniform mat4 uMVP;
+  void main(){ gl_Position=uMVP*vec4(aPos,1.0); gl_Position.z -= 0.0015*gl_Position.w; }`,
+  `#version 300 es
+  precision highp float; out vec4 o; void main(){ o=vec4(0.04,0.045,0.06,1.0); }`);
+
+const vaoMesh = gl.createVertexArray(), vaoLine = gl.createVertexArray();
+const bufs = { pos:gl.createBuffer(), nrm:gl.createBuffer(), col:gl.createBuffer(), edge:gl.createBuffer() };
+let counts = { tris:0, lines:0 };
+function upload(b){
+  gl.bindVertexArray(vaoMesh);
+  for (const [i,[buf,data]] of [[0,[bufs.pos,b.pos]],[1,[bufs.nrm,b.nrm]],[2,[bufs.col,b.col]]].map((x,i)=>[i,x[1]]))
+    { gl.bindBuffer(gl.ARRAY_BUFFER,buf); gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i,3,gl.FLOAT,false,0,0); }
+  gl.bindVertexArray(vaoLine);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufs.edge); gl.bufferData(gl.ARRAY_BUFFER,b.edge,gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+  counts = { tris:b.tris, lines:b.lines };
+}
+
+// column-major helpers
+function perspective(fov, asp, near, far){ const f=1/Math.tan(fov/2), d=near-far;
+  return [f/asp,0,0,0, 0,f,0,0, 0,0,(near+far)/d,-1, 0,0,2*near*far/d,0]; }
+function mul(a,b){ const r=new Array(16).fill(0);
+  for(let c=0;c<4;c++)for(let i=0;i<4;i++)for(let k=0;k<4;k++) r[c*4+i]+=a[k*4+i]*b[c*4+k]; return r; }
+function rotXY(yaw,pitch){
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),cx=Math.cos(pitch),sx=Math.sin(pitch);
+  // R = Rx(pitch)*Ry(yaw), column-major 3x3
+  return [ cy,sx*sy,-cx*sy,  0,cx,sx,  sy,-sx*cy,cx*cy ];
+}
+const cam = { yaw:0.7, pitch:0.45, dist:3.2 };
+let radius = 1;
+
+function draw(){
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const size=Math.max(64,Math.round(stage.clientWidth*dpr));
+  if(stage.width!==size){ stage.width=size; stage.height=size; }
+  gl.viewport(0,0,stage.width,stage.height);
+  gl.clearColor(0.055,0.06,0.078,1); gl.enable(gl.DEPTH_TEST);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  const R = rotXY(cam.yaw, cam.pitch);
+  const d = cam.dist * radius;
+  const view = [ R[0],R[1],R[2],0, R[3],R[4],R[5],0, R[6],R[7],R[8],0, 0,0,-d,1 ];
+  const mvp = mul(perspective(0.7, 1, 0.05, 40+2*d), view);
+  gl.useProgram(meshProg);
+  gl.uniformMatrix4fv(gl.getUniformLocation(meshProg,'uMVP'),false,mvp);
+  gl.uniformMatrix3fv(gl.getUniformLocation(meshProg,'uRot'),false,R);
+  gl.bindVertexArray(vaoMesh);
+  gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1,1);
+  gl.drawArrays(gl.TRIANGLES,0,counts.tris);
+  gl.disable(gl.POLYGON_OFFSET_FILL);
+  if (rt.doc.Edges){
+    gl.useProgram(lineProg);
+    gl.uniformMatrix4fv(gl.getUniformLocation(lineProg,'uMVP'),false,mvp);
+    gl.bindVertexArray(vaoLine);
+    gl.drawArrays(gl.LINES,0,counts.lines);
+  }
+}
+
+// ---- Gratify control panel --------------------------------------------------
+const MODES = [['arity','Sides'],['area','Area'],['normal','Normal'],['ivory','Plain']];
+const init = { Mode:'arity', Shrink:SQRT2_1, Twist:0.29, Edges:true, Spin:true };
+const update=(doc,i)=> i.kind==='set'    ? {...doc,[i.field]:i.value}
+                     : i.kind==='toggle' ? {...doc,[i.field]:!doc[i.field]}
+                     : doc;
+const view=(doc)=> Card('panel',{title:'Polyhedron controls'},[
+  Labeled('mode','Color faces by', Button('mode-b',{
+    label: MODES.find(([k])=>k===doc.Mode)[1],
+    press: {kind:'set',field:'Mode',
+            value: MODES[(MODES.findIndex(([k])=>k===doc.Mode)+1)%MODES.length][0]} })),
+  Labeled('shrink','Expand / snub shrink',
+    Slider('shrink-s',{ value:doc.Shrink, width:120, set:(v)=>({kind:'set',field:'Shrink',value:Math.max(.05,Math.min(.95,v))}) })),
+  Labeled('twist','Snub twist',
+    Slider('twist-s',{ value:doc.Twist, width:120, set:(v)=>({kind:'set',field:'Twist',value:v}) })),
+  Labeled('edges','Edges', Toggle('edges-t',{ on:doc.Edges, flip:{kind:'toggle',field:'Edges'} })),
+  Labeled('spin','Auto-spin', Toggle('spin-t',{ on:doc.Spin, flip:{kind:'toggle',field:'Spin'} })),
+]);
+const rt = mount(document.getElementById('panel'), { init, update, view });
+
+// ---- DOM: seeds, operators, catalog ----------------------------------------
+const status = document.getElementById('status');
+function el(id){ return document.getElementById(id); }
+for (const [k,n] of SEEDS){
+  const b=document.createElement('button'); b.textContent=`${k} · ${n}`; b.id='seed_'+k;
+  b.onclick=()=>{ state.seed=k; refresh(OPS[state.ops[0]]?.desc ?? SEED_DESC); };
+  el('seeds').appendChild(b);
+}
+for (const k of Object.keys(OPS)){
+  const b=document.createElement('button'); b.textContent=`${k} · ${OPS[k].name}`; b.className='op';
+  b.onclick=()=>{ if(state.ops.length>=6){ flash('chain capped at 6 operators'); return; }
+                  state.ops.unshift(k); refresh(OPS[k].desc); };
+  el('ops').appendChild(b);
+}
+el('undo').onclick=()=>{ state.ops.shift(); refresh(); };
+el('clear').onclick=()=>{ state.ops=[]; refresh(SEED_DESC); };
+const sel = el('catalog');
+CATALOG.forEach((row,i)=>{
+  const o=document.createElement('option');
+  if(row.length===1){ o.disabled=true; o.textContent=row[0]; }
+  else o.textContent=row[0];
+  o.value=i; sel.appendChild(o);
+});
+sel.onchange=()=>{
+  const row=CATALOG[sel.value]; if(row.length===1) return;
+  const [name,seed,ops,params]=row;
+  state.seed=seed; state.ops=ops.split('');
+  if(params.shrink!==undefined) rt.dispatch({kind:'set',field:'Shrink',value:params.shrink});
+  if(params.twist !==undefined) rt.dispatch({kind:'set',field:'Twist', value:params.twist});
+  refresh(`${name}: the Conway program “${notation()}” over the ${SEEDS.find(([k])=>k===seed)[1]} seed.`
+          + (ops ? ` Outermost operator: ${OPS[ops[0]].name}.` : ''));
+};
+
+function flash(msg){ status.className='status err'; status.textContent=msg; }
+
+// ---- refresh pipeline -------------------------------------------------------
+let lastDoc = rt.doc, currentData = null;
+function refresh(desc){
+  for (const [k] of SEEDS) el('seed_'+k).classList.toggle('on', k===state.seed);
+  el('notation').textContent = notation();
+  if (desc) el('mdesc').textContent = desc;
+  try {
+    const t0 = performance.now();
+    currentData = buildMesh(rt.doc);
+    upload(toBuffers(currentData, rt.doc.Mode));
+    radius = currentData.radius;
+    const ms = performance.now()-t0;
+    stats(currentData, ms);
+    status.className='status';
+    status.textContent=`PASS · ${notation()} · ${currentData.F} faces via Plato TypeScript in ${ms.toFixed(0)} ms`;
+    draw();
+  } catch(e){ flash(`FAIL (${notation()}): ${e.message}`); }
+}
+function stats(d, ms){
+  const chi = d.V - d.E + d.F;
+  const hist = new Map();
+  for (const fc of d.faces) hist.set(fc.loop.length,(hist.get(fc.loop.length)??0)+1);
+  const names={3:'triangles',4:'quads',5:'pentagons',6:'hexagons',7:'heptagons',8:'octagons',10:'decagons',12:'12-gons'};
+  const rows=[...hist.entries()].sort((a,b)=>a[0]-b[0]).map(([n,c])=>{
+    const [r,g,b]=arityColor(n).map(x=>Math.round(x*255));
+    return `<div class="bar"><span class="sw" style="background:rgb(${r},${g},${b})"></span>
+            <span class="n">${c}</span> ${names[n]??n+'-gons'}</div>`; }).join('');
+  el('stats').innerHTML = `<div class="t">${notation()}</div>
+    <div class="kv"><span>Vertices</span><b>${d.V}</b></div>
+    <div class="kv"><span>Edges</span><b>${d.E}</b></div>
+    <div class="kv"><span>Faces</span><b>${d.F}</b></div>
+    <div class="kv"><span>Euler V−E+F</span><b>${chi}${chi===2?' ✓':' ✗'}</b></div>
+    <div class="kv"><span>Build</span><b>${ms.toFixed(0)} ms</b></div>
+    <div class="hist">${rows}</div>`;
+}
+
+// ---- render loop ------------------------------------------------------------
+function frame(){
+  const doc = rt.doc;
+  if (doc !== lastDoc){
+    const rebuild = doc.Shrink!==lastDoc.Shrink || doc.Twist!==lastDoc.Twist;
+    const recolor = doc.Mode!==lastDoc.Mode;
+    lastDoc = doc;
+    if (rebuild && state.ops.some(o=>o==='e'||o==='s')) refresh();
+    else if (recolor && currentData){ upload(toBuffers(currentData, doc.Mode)); draw(); }
+    else draw();
+  }
+  if (doc.Spin){ cam.yaw += 0.004; draw(); }
+  requestAnimationFrame(frame);
+}
+(function orbit(){
+  let drag=false,lx=0,ly=0;
+  stage.addEventListener('pointerdown',e=>{ drag=true; lx=e.clientX; ly=e.clientY; });
+  window.addEventListener('pointermove',e=>{ if(!drag)return;
+    cam.yaw+=(e.clientX-lx)*0.008; cam.pitch+=(e.clientY-ly)*0.008;
+    cam.pitch=Math.max(-1.5,Math.min(1.5,cam.pitch)); lx=e.clientX; ly=e.clientY; draw(); });
+  window.addEventListener('pointerup',()=>{ drag=false; });
+  stage.addEventListener('wheel',e=>{ e.preventDefault();
+    cam.dist=Math.max(1.6,Math.min(8,cam.dist*Math.exp(e.deltaY*0.001))); draw(); },{passive:false});
+})();
+
+el('mdesc').textContent = SEED_DESC;
+refresh();
+requestAnimationFrame(frame);
+window.addEventListener('resize', draw);
+// debug/test hook
+window.__poly = { state, rt, refresh, counts:()=>counts, data:()=>currentData };
+</script></body></html>

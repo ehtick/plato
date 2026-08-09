@@ -23,3 +23,12 @@ conformance/Ara3D.SDK.ConformanceTests/Generated/
 
 # Python bytecode from tools/*.py
 tools/__pycache__/
+
+# local harness worktrees / generated outputs (recipes recreate them)
+/Small/
+/conformance/
+/csg/
+/earcut/
+/optimizer-smoke/
+/Generated/Plato.Generated.Optimized/
+/Generated/Plato.Generated.Unoptimized/interfaces.txt
