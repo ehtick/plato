@@ -159,3 +159,8 @@ Issue frontmatter is the source of truth; this file is a generated view
 | [plato-380](issues/plato-380.md) | Integer2/Integer3 key types: re-express Indexable2D/3D as key instances | idea | ? | ? | ? | plato | idea |  |
 | [plato-381](issues/plato-381.md) | Concrete Dictionary type: decide whether keyed-lookup vocabulary earns its keep | idea | ? | ? | ? | plato | idea |  |
 | [plato-415](issues/plato-415.md) | Expand the polygon library: triangulation, booleans, offset, predicates, queries | idea | ? | ? | ? | plato | idea |  |
+| [plato-449](issues/plato-449.md) | TypeScript writer computes Number in 64-bit floats, but SEMANTICS.md says Number is 32-bit | bug | ? | ? | ? | plato | idea |  |
+| [plato-450](issues/plato-450.md) | Add an unsigned 32-bit integer type with wrapping arithmetic, multiply-high, and bit operations | feature | ? | ? | ? | plato | idea |  |
+| [plato-451](issues/plato-451.md) | Add a WGSL writer | feature | ? | ? | ? | plato | idea |  |
+| [plato-452](issues/plato-452.md) | TypeScript writer: emit standalone exported functions a bundler can trim, without patching Number.prototype | feature | ? | ? | ? | plato | idea |  |
+| [plato-453](issues/plato-453.md) | Report functions outside the GPU subset as diagnostics instead of skipping them silently | feature | ? | ? | ? | plato | idea |  |
